@@ -34,11 +34,11 @@ sampler:
   beta_end: 0.02
 
 train:
-  batch_size: 32
+  batch_size: 128
   gradient_accumulate_every: 1
   lr: 0.0001
-  num_steps: 200000
-  save_and_sample_every: 50000
+  num_steps: 300000
+  save_and_sample_every: 30000
   num_samples: 25
   augment_horizontal_flip: true
   ema_update_every: 10
@@ -48,7 +48,7 @@ train:
   mixed_precision_type: fp16
   split_batches: true
   calculate_fid: false
-  num_fid_samples: 10000
+  num_fid_samples: 50000
   save_best_and_latest_only: false
 
 wandb:
@@ -58,7 +58,7 @@ wandb:
 visualization:
   train_triplet:
     enabled: true
-    every_n_steps: 50
+    every_n_steps: 1000
     log_images_per_step: 8
   reverse_trajectory:
     enabled: true
@@ -67,8 +67,8 @@ visualization:
     seed: 1234
 
 eval:
-  batch_size: 64
-  num_fid_samples: 10000
+  batch_size: 256
+  num_fid_samples: 50000
   compute_is: false
   num_is_samples: 10000
   is_splits: 10
