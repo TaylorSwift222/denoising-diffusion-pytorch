@@ -1,5 +1,7 @@
 import argparse
+import datetime
 import json
+import sys
 from pathlib import Path
 
 import torch
@@ -20,6 +22,51 @@ from denoising_diffusion_pytorch.experiment_utils import (
 )
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+class TeeStream:
+    """Duplicate writes to both the original stream and a log file."""
+
+    def __init__(self, stream, log_file):
+        self.stream = stream
+        self.log_file = log_file
+
+    def write(self, data):
+        self.stream.write(data)
+        self.log_file.write(data)
+        self.log_file.flush()
+
+    def flush(self):
+        self.stream.flush()
+        self.log_file.flush()
+
+    def fileno(self):
+        return self.stream.fileno()
+
+    def isatty(self):
+        return self.stream.isatty()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
+def setup_eval_logging(run_dir):
+    """Create a timestamped eval log file and tee stdout/stderr."""
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = ensure_dir(run_dir)
+    log_path = run_dir / f"eval_{timestamp}.log"
+    log_file = open(log_path, "w", encoding="utf-8")
+    sys.stdout = TeeStream(sys.__stdout__, log_file)
+    sys.stderr = TeeStream(sys.__stderr__, log_file)
+    return log_path, log_file
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate CIFAR-10 DDPM curriculum checkpoints.")
@@ -169,8 +216,28 @@ def main():
     config = load_config(args)
     milestones = args.milestones if args.milestones is not None else [args.milestone]
 
-    for milestone in milestones:
-        evaluate_one(config, args, milestone)
+    # Setup logging
+    run_dir = Path(args.run_dir) if args.run_dir else Path(".")
+    log_path, log_file = setup_eval_logging(run_dir)
+    try:
+        sep = "=" * 60
+        print(sep)
+        print(f"Eval started : {datetime.datetime.now().isoformat()}")
+        print(f"Run dir      : {run_dir}")
+        print(f"Milestones   : {milestones}")
+        print(f"Log file     : {log_path}")
+        print(sep)
+
+        for milestone in milestones:
+            evaluate_one(config, args, milestone)
+
+        print(f"\n{sep}")
+        print(f"Eval complete: {datetime.datetime.now().isoformat()}")
+        print(sep)
+    finally:
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        log_file.close()
 
 
 if __name__ == "__main__":
