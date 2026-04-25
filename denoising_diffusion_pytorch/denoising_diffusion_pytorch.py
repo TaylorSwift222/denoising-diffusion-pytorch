@@ -793,7 +793,7 @@ class GaussianDiffusion(Module):
             extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def p_losses(self, x_start, t, noise = None, offset_noise_strength = None):
+    def p_losses(self, x_start, t, noise = None, offset_noise_strength = None, return_vis = False):
         b, c, h, w = x_start.shape
 
         noise = default(noise, lambda: torch.randn_like(x_start))
@@ -838,9 +838,28 @@ class GaussianDiffusion(Module):
         loss = reduce(loss, 'b ... -> b', 'mean')
 
         loss = loss * extract(self.loss_weight, t, loss.shape)
-        return loss.mean()
+        loss = loss.mean()
 
-    def forward(self, img, *args, step = None, **kwargs):
+        if not return_vis:
+            return loss
+
+        if self.objective == 'pred_noise':
+            pred_x_start = self.predict_start_from_noise(x, t, model_out)
+        elif self.objective == 'pred_x0':
+            pred_x_start = model_out
+        elif self.objective == 'pred_v':
+            pred_x_start = self.predict_start_from_v(x, t, model_out)
+
+        vis = {
+            'x_t': self.unnormalize(x.detach().clamp(-1., 1.)),
+            'pred_x_start': self.unnormalize(pred_x_start.detach().clamp(-1., 1.)),
+            'x_start': self.unnormalize(x_start.detach().clamp(-1., 1.)),
+            't': t.detach()
+        }
+
+        return loss, vis
+
+    def forward(self, img, *args, step = None, return_vis = False, **kwargs):
         b, c, h, w, device, img_size, = *img.shape, img.device, self.image_size
         assert h == img_size[0] and w == img_size[1], f'height and width of image must be {img_size}'
 
@@ -850,7 +869,7 @@ class GaussianDiffusion(Module):
             t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
         img = self.normalize(img)
-        return self.p_losses(img, t, *args, **kwargs)
+        return self.p_losses(img, t, *args, return_vis = return_vis, **kwargs)
 
 # dataset classes
 

@@ -189,6 +189,40 @@ class CurriculumSampler:
             probs_tensor = torch.from_numpy(probs).float().to(device)
             return torch.multinomial(probs_tensor, batch_size, replacement=True)
 
+    def probabilities(self, step: int = 0) -> np.ndarray:
+        """
+        Return the sampling distribution for logging or plotting.
+
+        This is read-only metadata; it is not used to alter training behavior.
+        """
+        if self.mode == 'uniform':
+            return np.ones(self.T) / self.T
+
+        if self.mode == 'static':
+            return self._static_probs.numpy().copy()
+
+        return self._curriculum_probs(step)
+
+    def metadata(self, step: int = 0) -> dict:
+        """
+        Return scalar metadata for experiment logging.
+        """
+        probs = self.probabilities(step)
+        uniform_prob = 1.0 / self.T
+        curriculum_steps = self.c * self.S
+        uc = min(step / curriculum_steps, 1.0) if curriculum_steps > 0 else 1.0
+        entropy = -np.sum(probs * np.log(probs + 1e-12))
+
+        return {
+            'sampler/mode': self.mode,
+            'sampler/uc': float(uc),
+            'sampler/q_min': float(probs.min()),
+            'sampler/q_max': float(probs.max()),
+            'sampler/q_entropy': float(entropy),
+            'sampler/q_min_over_uniform': float(probs.min() / uniform_prob),
+            'sampler/q_max_over_uniform': float(probs.max() / uniform_prob),
+        }
+
     def compute_marginal(self, num_steps: int = None) -> np.ndarray:
         """
         Theoretically precompute the cumulative marginal M_i for the entire training.

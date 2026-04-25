@@ -1,0 +1,76 @@
+experiment:
+  name: uniform
+  seed: 42
+
+data:
+  path: data/cifar10_images
+
+output:
+  root: output
+
+model:
+  dim: 64
+  dim_mults: [1, 2, 4, 8]
+  channels: 3
+  self_condition: false
+  dropout: 0.0
+  flash_attn: false
+
+diffusion:
+  image_size: 32
+  timesteps: 1000
+  sampling_timesteps: 50
+  objective: pred_noise
+  beta_schedule: linear
+  ddim_sampling_eta: 0.0
+  auto_normalize: true
+
+sampler:
+  mode: uniform
+  curriculum_ratio: 0.5
+  sigma_soft: 0.08
+  rho: 0.1
+  beta_start: 0.0001
+  beta_end: 0.02
+
+train:
+  batch_size: 32
+  gradient_accumulate_every: 1
+  lr: 0.0001
+  num_steps: 200000
+  save_and_sample_every: 50000
+  num_samples: 25
+  augment_horizontal_flip: true
+  ema_update_every: 10
+  ema_decay: 0.995
+  adam_betas: [0.9, 0.99]
+  amp: true
+  mixed_precision_type: fp16
+  split_batches: true
+  calculate_fid: false
+  num_fid_samples: 10000
+  save_best_and_latest_only: false
+
+wandb:
+  project: cognitive-ddpm-curriculum
+  mode: disabled
+
+visualization:
+  train_triplet:
+    enabled: true
+    every_n_steps: 50
+    log_images_per_step: 8
+  reverse_trajectory:
+    enabled: true
+    batch_size: 4
+    num_stages: 8
+    seed: 1234
+
+eval:
+  batch_size: 64
+  num_fid_samples: 10000
+  compute_is: false
+  num_is_samples: 10000
+  is_splits: 10
+  inception_block_idx: 2048
+  num_preview_samples: 25
