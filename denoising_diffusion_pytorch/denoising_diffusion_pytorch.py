@@ -491,13 +491,15 @@ class GaussianDiffusion(Module):
         offset_noise_strength = 0.,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
         min_snr_loss_weight = False, # https://arxiv.org/abs/2303.09556
         min_snr_gamma = 5,
-        immiscible = False
+        immiscible = False,
+        timestep_sampler = None      # CurriculumSampler instance, None = uniform (original behavior)
     ):
         super().__init__()
         assert not (type(self) == GaussianDiffusion and model.channels != model.out_dim)
         assert not hasattr(model, 'random_or_learned_sinusoidal_cond') or not model.random_or_learned_sinusoidal_cond
 
         self.model = model
+        self.timestep_sampler = timestep_sampler
 
         self.channels = self.model.channels
         self.self_condition = self.model.self_condition
@@ -528,6 +530,12 @@ class GaussianDiffusion(Module):
 
         timesteps, = betas.shape
         self.num_timesteps = int(timesteps)
+
+        # validate timestep sampler consistency
+
+        if exists(timestep_sampler):
+            assert timestep_sampler.T == self.num_timesteps, \
+                f'timestep_sampler.T ({timestep_sampler.T}) must match num_timesteps ({self.num_timesteps})'
 
         # sampling related parameters
 
@@ -832,10 +840,14 @@ class GaussianDiffusion(Module):
         loss = loss * extract(self.loss_weight, t, loss.shape)
         return loss.mean()
 
-    def forward(self, img, *args, **kwargs):
+    def forward(self, img, *args, step = None, **kwargs):
         b, c, h, w, device, img_size, = *img.shape, img.device, self.image_size
         assert h == img_size[0] and w == img_size[1], f'height and width of image must be {img_size}'
-        t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
+
+        if self.timestep_sampler is not None and step is not None:
+            t = self.timestep_sampler.sample(b, step, device).long()
+        else:
+            t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
         img = self.normalize(img)
         return self.p_losses(img, t, *args, **kwargs)
@@ -935,6 +947,12 @@ class Trainer:
 
         self.train_num_steps = train_num_steps
         self.image_size = diffusion_model.image_size
+
+        # validate curriculum sampler consistency
+
+        if exists(diffusion_model.timestep_sampler) and hasattr(diffusion_model.timestep_sampler, 'S'):
+            assert diffusion_model.timestep_sampler.S == train_num_steps, \
+                f'timestep_sampler.S ({diffusion_model.timestep_sampler.S}) must match train_num_steps ({train_num_steps})'
 
         self.max_grad_norm = max_grad_norm
 
@@ -1055,7 +1073,7 @@ class Trainer:
                     data = next(self.dl).to(device)
 
                     with self.accelerator.autocast():
-                        loss = self.model(data)
+                        loss = self.model(data, step=self.step)
                         loss = loss / self.gradient_accumulate_every
                         total_loss += loss.item()
 

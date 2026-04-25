@@ -1,6 +1,10 @@
 # Generation results
 results/
 
+# Project data & outputs (not tracked)
+data/
+output/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
