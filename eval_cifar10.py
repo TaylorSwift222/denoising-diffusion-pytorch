@@ -78,8 +78,13 @@ def parse_args():
     parser.add_argument("--use-ema", action="store_true", default=True)
     parser.add_argument("--no-ema", dest="use_ema", action="store_false")
     parser.add_argument("--num-fid-samples", type=int, default=None)
+    parser.add_argument("--num-is-samples", type=int, default=None)
+    parser.add_argument("--is-splits", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--compute-is", action="store_true")
+    parser.add_argument("--skip-fid", action="store_true", help="Only compute preview/IS metrics; useful for adding IS after FID is done.")
+    parser.add_argument("--skip-visuals", action="store_true", help="Skip sample grid and reverse trajectory generation.")
+    parser.add_argument("--metrics-file", type=str, default="metrics.csv", help="Metrics CSV name or path. Relative paths are placed under --run-dir.")
     return parser.parse_args()
 
 
@@ -151,51 +156,59 @@ def evaluate_one(config, args, milestone):
     batch_size = int(args.batch_size or eval_cfg.get("batch_size", config.get("train", {}).get("batch_size", 32)))
     num_fid_samples = int(args.num_fid_samples or eval_cfg.get("num_fid_samples", 10000))
 
-    with torch.inference_mode():
+    if args.skip_fid and not (args.compute_is or eval_cfg.get("compute_is", False)):
+        raise ValueError("--skip-fid was set, but IS is disabled; nothing to evaluate.")
+
+    if not args.skip_visuals:
         sample_count = int(eval_cfg.get("num_preview_samples", 25))
-        samples = torch.cat([model.sample(batch_size=n) for n in num_to_groups(sample_count, batch_size)], dim=0)
-        utils.save_image(samples, str(eval_dir / "sample-grid.png"), nrow=int(sample_count ** 0.5))
+        with torch.inference_mode():
+            samples = torch.cat([model.sample(batch_size=n) for n in num_to_groups(sample_count, batch_size)], dim=0)
+            utils.save_image(samples, str(eval_dir / "sample-grid.png"), nrow=int(sample_count ** 0.5))
 
-    reverse_cfg = config.get("visualization", {}).get("reverse_trajectory", {})
-    if reverse_cfg.get("enabled", True):
-        save_reverse_trajectory(
-            model,
-            eval_dir / "reverse-trajectory.png",
-            batch_size=int(reverse_cfg.get("batch_size", 4)),
-            num_stages=int(reverse_cfg.get("num_stages", 8)),
-            seed=reverse_cfg.get("seed"),
+        reverse_cfg = config.get("visualization", {}).get("reverse_trajectory", {})
+        if reverse_cfg.get("enabled", True):
+            save_reverse_trajectory(
+                model,
+                eval_dir / "reverse-trajectory.png",
+                batch_size=int(reverse_cfg.get("batch_size", 4)),
+                num_stages=int(reverse_cfg.get("num_stages", 8)),
+                seed=reverse_cfg.get("seed"),
+            )
+
+    fid = None
+    if not args.skip_fid:
+        ds = Dataset(
+            config.get("data", {}).get("path", "data/cifar10_images"),
+            diffusion.image_size,
+            augment_horizontal_flip=False,
+            convert_image_to=config.get("train", {}).get("convert_image_to"),
         )
+        dl = cycle(DataLoader(ds, batch_size=batch_size, shuffle=False, pin_memory=True))
 
-    ds = Dataset(
-        config.get("data", {}).get("path", "data/cifar10_images"),
-        diffusion.image_size,
-        augment_horizontal_flip=False,
-        convert_image_to=config.get("train", {}).get("convert_image_to"),
-    )
-    dl = cycle(DataLoader(ds, batch_size=batch_size, shuffle=False, pin_memory=True))
-
-    fid_scorer = FIDEvaluation(
-        batch_size=batch_size,
-        dl=dl,
-        sampler=model,
-        channels=diffusion.channels,
-        accelerator=None,
-        stats_dir=str(run_dir),
-        device=device,
-        num_fid_samples=num_fid_samples,
-        inception_block_idx=int(eval_cfg.get("inception_block_idx", 2048)),
-    )
-    fid = fid_scorer.fid_score()
+        fid_scorer = FIDEvaluation(
+            batch_size=batch_size,
+            dl=dl,
+            sampler=model,
+            channels=diffusion.channels,
+            accelerator=None,
+            stats_dir=str(run_dir),
+            device=device,
+            num_fid_samples=num_fid_samples,
+            inception_block_idx=int(eval_cfg.get("inception_block_idx", 2048)),
+        )
+        fid = fid_scorer.fid_score()
 
     is_mean = None
     is_std = None
     if args.compute_is or eval_cfg.get("compute_is", False):
+        num_is_samples = int(args.num_is_samples or eval_cfg.get("num_is_samples", num_fid_samples))
+        is_splits = int(args.is_splits or eval_cfg.get("is_splits", 10))
         is_mean, is_std = inception_score(
             model,
             batch_size=batch_size,
-            num_samples=int(eval_cfg.get("num_is_samples", num_fid_samples)),
+            num_samples=num_is_samples,
             device=device,
-            splits=int(eval_cfg.get("is_splits", 10)),
+            splits=is_splits,
         )
 
     row = {
@@ -207,7 +220,10 @@ def evaluate_one(config, args, milestone):
         "inception_score_std": is_std,
         "num_fid_samples": num_fid_samples,
     }
-    append_metrics_csv(run_dir / "metrics.csv", row)
+    metrics_path = Path(args.metrics_file)
+    if not metrics_path.is_absolute():
+        metrics_path = run_dir / metrics_path
+    append_metrics_csv(metrics_path, row)
     print(row)
 
 
