@@ -38,6 +38,12 @@ for i in "${!EXPERIMENTS[@]}"; do
     continue
   fi
 
+  if [[ -e "${RUN_DIR}/metrics_is.csv" ]]; then
+    echo "  ✗ refusing to append existing file: ${RUN_DIR}/metrics_is.csv"
+    FAILURES=$((FAILURES + 1))
+    continue
+  fi
+
   echo "  GPU ${i} | IS eval ${EXP} → ${RUN_DIR}/metrics_is.csv"
   CUDA_VISIBLE_DEVICES="${i}" python eval_cifar10.py \
     --run-dir "${RUN_DIR}" \
